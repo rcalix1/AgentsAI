@@ -6,7 +6,15 @@
 * AI for Business Intelligence and Analytics - Integration of AI tools and practical application
 * link
 * https://agents4science.github.io/curriculum.html
-* 
+
+## Karpathy - Autosearch
+
+* https://github.com/karpathy/autoresearch
+
+## CloudAI
+
+* Replicate is here 
+* https://github.com/rcalix1/CloudComputing
 
 ## Andrew Ng - AI Agents
 
