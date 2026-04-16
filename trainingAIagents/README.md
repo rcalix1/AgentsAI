@@ -1,7 +1,6 @@
-##  AI Agent Behavioral Tool Learning (AABTL)
+##  AI Agent Behavioral Tool Learning 
 
-* Closed-Loop Agent Learning (CLAL)
-
+* a type of Closed-Loop Agent Learning 
 * AI Agents and Training 
 
 
