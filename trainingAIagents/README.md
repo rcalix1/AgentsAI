@@ -1,7 +1,12 @@
 ##  AI Agent Behavioral Tool Learning 
 
 * a type of Closed-Loop Agent Learning 
-* AI Agents and Training 
+* AI Agents and Training
+
+## Current Jupyters
+
+* 3 works
+* 4 same as 3 but started adding PPO
 
 
 ```
