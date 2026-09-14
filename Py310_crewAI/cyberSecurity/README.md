@@ -1,9 +1,16 @@
 ## Cyber Security with AI agents
 
 * on windows
+* 
+* for ollama:
 * cmd
 * ollama run llama3.2
 * 
+* for Jupyter:
+* anaconda prompt
+* conda env list
+* 
+* CrewAI uses python 3.10
 
 
 ## Putty, Virtual Box and linux VM
