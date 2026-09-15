@@ -2276,6 +2276,2744 @@ if __name__ == "__main__":
 ```
 
 
+## dataset paper second attempt 
+
+
+
+```
+
+
+
+
+# ================================================================
+# CYBER_BEHAVIOR_DATASET.py
+#
+# Autonomous Cybersecurity Behavioral Dataset Generation
+# Through Attacker / Defender Interaction
+#
+# CENTRAL RESEARCH IDEA
+# ---------------------
+# Agents use tools normally.
+#
+# EVERY TOOL is wrapped by logging_tool().
+#
+#       Agent
+#         |
+#         v
+#   logging_tool()
+#         |
+#         +-------> Behavioral Dataset
+#         |
+#         v
+#      Real Tool
+#         |
+#         v
+#   Cyber Range VM
+#
+#
+# The resulting trajectory data are then used to train a simple
+# defender policy.
+#
+# Experiment:
+#
+#     BEFORE TRAINING
+#         Random / Majority policy
+#
+#     AUTOMATIC DATA COLLECTION
+#         Attacker actions
+#         Defender observations
+#         Tool trajectories
+#
+#     TRAINING
+#         Neural defender policy
+#
+#     AFTER TRAINING
+#         Held-out cyber-range episodes
+#
+#
+# Designed ONLY for an isolated VM cyber range you own/control.
+#
+# Install:
+#
+# pip install paramiko pandas numpy torch
+#
+# ================================================================
+
+
+import paramiko
+import pandas as pd
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+import socket
+import subprocess
+import platform
+import random
+import time
+import json
+import uuid
+import re
+
+from datetime import datetime
+
+
+# ================================================================
+# CONFIGURATION
+# ================================================================
+#
+# TARGET VM
+#
+# Example VirtualBox Host-Only:
+#
+#     TARGET_HOST = "192.168.56.101"
+#
+# OR NAT port forwarding:
+#
+#     TARGET_HOST = "127.0.0.1"
+#     TARGET_SSH_PORT = 2222
+#
+# ================================================================
+
+TARGET_HOST = "127.0.0.1"
+TARGET_SSH_PORT = 2222
+
+
+# ------------------------------------------------
+# VALID LAB ACCOUNT
+# ------------------------------------------------
+
+TARGET_USERNAME = "YOUR_USERNAME"
+TARGET_PASSWORD = "YOUR_PASSWORD"
+
+
+# ------------------------------------------------
+# INVALID PASSWORD
+#
+# Used to generate controlled failed authentication
+# events in YOUR OWN VM.
+# ------------------------------------------------
+
+INVALID_PASSWORD = "THIS_PASSWORD_IS_INTENTIONALLY_WRONG_9281"
+
+
+# ------------------------------------------------
+# EXPERIMENT
+# ------------------------------------------------
+
+NUM_EPISODES = 200
+
+TRAIN_FRACTION = 0.80
+
+RANDOM_SEED = 42
+
+
+# ------------------------------------------------
+# OUTPUT FILES
+# ------------------------------------------------
+
+TRAJECTORY_FILE = "cyber_agent_trajectories.csv"
+
+TRAJECTORY_JSONL = "cyber_agent_trajectories.jsonl"
+
+ML_DATASET_FILE = "cyber_behavior_ml_dataset.csv"
+
+MODEL_FILE = "defender_policy.pt"
+
+
+# ================================================================
+# SAFETY / RANGE LOCK
+# ================================================================
+#
+# This program deliberately accepts ONLY:
+#
+# localhost
+# RFC1918 private addresses
+#
+# This keeps the experiment tied to a private cyber range.
+#
+# ================================================================
+
+
+def private_lab_target(host):
+
+    if host in [
+        "localhost",
+        "127.0.0.1"
+    ]:
+        return True
+
+    try:
+
+        ip = socket.gethostbyname(host)
+
+        parts = [
+            int(x)
+            for x in ip.split(".")
+        ]
+
+        if parts[0] == 10:
+            return True
+
+        if (
+            parts[0] == 172
+            and
+            16 <= parts[1] <= 31
+        ):
+            return True
+
+        if (
+            parts[0] == 192
+            and
+            parts[1] == 168
+        ):
+            return True
+
+    except:
+        pass
+
+    return False
+
+
+if not private_lab_target(TARGET_HOST):
+
+    raise ValueError(
+        "\nTARGET_HOST must be localhost or an RFC1918 "
+        "private cyber-range address.\n"
+    )
+
+
+# ================================================================
+# REPRODUCIBILITY
+# ================================================================
+
+random.seed(RANDOM_SEED)
+
+np.random.seed(RANDOM_SEED)
+
+torch.manual_seed(RANDOM_SEED)
+
+
+# ================================================================
+# GLOBAL TRAJECTORY STORAGE
+# ================================================================
+
+logs = []
+
+
+# ================================================================
+# CURRENT EXPERIMENT CONTEXT
+# ================================================================
+#
+# logging_tool() reads this automatically.
+#
+# This means the AGENT and TOOL do not need to know anything
+# about dataset generation.
+#
+# ================================================================
+
+context = {
+
+    "episode_id": None,
+
+    "step": 0,
+
+    "agent_role": None,
+
+    "scenario": None,
+
+    "previous_action": None,
+
+    "ground_truth": None
+}
+
+
+# ================================================================
+# CENTRAL CONTRIBUTION:
+#
+# AUTOMATIC TOOL TRAJECTORY LOGGER
+# ================================================================
+#
+# This is the expanded cybersecurity version of:
+#
+# logs = []
+#
+# def logging_tool(tool_name, func):
+#
+#     def wrapper(x):
+#
+#         logs.append((x, tool_name))
+#
+#         return func(x)
+#
+#     return wrapper
+#
+#
+# ANY future tool can therefore become a data-generating
+# cybersecurity tool simply by wrapping it.
+#
+# ================================================================
+
+
+def logging_tool(agent_role, tool_name, func):
+
+    def wrapper(x=None):
+
+        start_time = time.time()
+
+        timestamp = datetime.now().isoformat()
+
+        success = True
+
+        error = ""
+
+        try:
+
+            result = func(x)
+
+        except Exception as e:
+
+            result = ""
+
+            success = False
+
+            error = str(e)
+
+
+        elapsed = time.time() - start_time
+
+
+        event = {
+
+            "episode_id":
+                context["episode_id"],
+
+            "timestamp":
+                timestamp,
+
+            "step":
+                context["step"],
+
+            "agent_role":
+                agent_role,
+
+            "scenario":
+                context["scenario"],
+
+            "tool_name":
+                tool_name,
+
+            "tool_input":
+                str(x),
+
+            "tool_output":
+                str(result),
+
+            "previous_action":
+                str(
+                    context["previous_action"]
+                ),
+
+            "ground_truth":
+                str(
+                    context["ground_truth"]
+                ),
+
+            "success":
+                int(success),
+
+            "execution_time":
+                elapsed,
+
+            "error":
+                error
+        }
+
+
+        logs.append(event)
+
+
+        return result
+
+
+    return wrapper
+
+
+# ================================================================
+# SSH CONNECTION
+# ================================================================
+
+
+def ssh_connect(
+    username=TARGET_USERNAME,
+    password=TARGET_PASSWORD,
+    timeout=5
+):
+
+    ssh = paramiko.SSHClient()
+
+    ssh.set_missing_host_key_policy(
+        paramiko.AutoAddPolicy()
+    )
+
+    ssh.connect(
+        TARGET_HOST,
+        port=TARGET_SSH_PORT,
+        username=username,
+        password=password,
+        timeout=timeout,
+        banner_timeout=timeout,
+        auth_timeout=timeout
+    )
+
+    return ssh
+
+
+# ================================================================
+# SSH COMMAND
+# ================================================================
+
+
+def execute_ssh(command):
+
+    ssh = ssh_connect()
+
+    try:
+
+        stdin, stdout, stderr = (
+            ssh.exec_command(
+                command,
+                timeout=10
+            )
+        )
+
+        output = (
+            stdout.read().decode(
+                errors="ignore"
+            )
+        )
+
+        error = (
+            stderr.read().decode(
+                errors="ignore"
+            )
+        )
+
+        return (
+            output
+            +
+            error
+        )
+
+    finally:
+
+        ssh.close()
+
+
+# ================================================================
+# ATTACKER TOOLS
+# ================================================================
+
+
+def raw_ping_target(x=None):
+
+    system = platform.system().lower()
+
+    if system == "windows":
+
+        command = [
+            "ping",
+            "-n",
+            "1",
+            TARGET_HOST
+        ]
+
+    else:
+
+        command = [
+            "ping",
+            "-c",
+            "1",
+            TARGET_HOST
+        ]
+
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=5
+    )
+
+    return (
+        result.stdout
+        +
+        result.stderr
+    )
+
+
+# ------------------------------------------------
+# TCP PROBE
+#
+# Restricted to the configured TARGET_HOST.
+# The input is ONLY the port number.
+# ------------------------------------------------
+
+
+def raw_tcp_probe(port):
+
+    port = int(port)
+
+    allowed_ports = [
+        TARGET_SSH_PORT,
+        22,
+        80,
+        443,
+        8080
+    ]
+
+    if port not in allowed_ports:
+
+        return (
+            "Port not included in "
+            "cyber-range experiment."
+        )
+
+
+    s = socket.socket(
+        socket.AF_INET,
+        socket.SOCK_STREAM
+    )
+
+    s.settimeout(1.0)
+
+    try:
+
+        result = s.connect_ex(
+            (
+                TARGET_HOST,
+                port
+            )
+        )
+
+        if result == 0:
+
+            return (
+                f"TCP port {port} OPEN"
+            )
+
+        return (
+            f"TCP port {port} CLOSED"
+        )
+
+    finally:
+
+        s.close()
+
+
+# ------------------------------------------------
+# VALID SSH LOGIN
+# ------------------------------------------------
+
+
+def raw_valid_ssh_login(x=None):
+
+    ssh = ssh_connect(
+        TARGET_USERNAME,
+        TARGET_PASSWORD
+    )
+
+    try:
+
+        stdin, stdout, stderr = (
+            ssh.exec_command(
+                "echo AUTHORIZED_LAB_LOGIN"
+            )
+        )
+
+        output = (
+            stdout.read()
+            .decode(
+                errors="ignore"
+            )
+        )
+
+        return output.strip()
+
+    finally:
+
+        ssh.close()
+
+
+# ------------------------------------------------
+# FAILED SSH LOGIN
+#
+# Creates a genuine failed authentication event
+# in the isolated VM's SSH telemetry.
+# ------------------------------------------------
+
+
+def raw_failed_ssh_login(x=None):
+
+    ssh = paramiko.SSHClient()
+
+    ssh.set_missing_host_key_policy(
+        paramiko.AutoAddPolicy()
+    )
+
+    try:
+
+        ssh.connect(
+            TARGET_HOST,
+            port=TARGET_SSH_PORT,
+            username=TARGET_USERNAME,
+            password=INVALID_PASSWORD,
+            timeout=3,
+            banner_timeout=3,
+            auth_timeout=3,
+            allow_agent=False,
+            look_for_keys=False
+        )
+
+        return "Unexpected authentication success"
+
+    except paramiko.AuthenticationException:
+
+        return (
+            "Controlled authentication failure generated"
+        )
+
+    except Exception as e:
+
+        return (
+            "Authentication probe result: "
+            +
+            str(e)
+        )
+
+    finally:
+
+        try:
+            ssh.close()
+        except:
+            pass
+
+
+# ================================================================
+# WRAPPED ATTACKER TOOLS
+# ================================================================
+
+ping_target = logging_tool(
+    "attacker",
+    "PingTarget",
+    raw_ping_target
+)
+
+
+tcp_probe = logging_tool(
+    "attacker",
+    "TCPProbe",
+    raw_tcp_probe
+)
+
+
+valid_ssh_login = logging_tool(
+    "attacker",
+    "ValidSSHLogin",
+    raw_valid_ssh_login
+)
+
+
+failed_ssh_login = logging_tool(
+    "attacker",
+    "FailedSSHLogin",
+    raw_failed_ssh_login
+)
+
+
+# ================================================================
+# DEFENDER TOOLS
+# ================================================================
+
+
+def raw_read_auth_log(x=None):
+
+    command = (
+        "journalctl "
+        "-u ssh "
+        "--no-pager "
+        "-n 100"
+    )
+
+    return execute_ssh(command)
+
+
+def raw_read_connections(x=None):
+
+    return execute_ssh(
+        "ss -tn"
+    )
+
+
+def raw_read_processes(x=None):
+
+    return execute_ssh(
+        "ps -eo pid,comm --sort=-pid | head -25"
+    )
+
+
+def raw_system_status(x=None):
+
+    return execute_ssh(
+        "uptime"
+    )
+
+
+# ================================================================
+# WRAPPED DEFENDER TOOLS
+# ================================================================
+
+read_auth_log = logging_tool(
+    "defender",
+    "ReadAuthenticationLog",
+    raw_read_auth_log
+)
+
+
+read_connections = logging_tool(
+    "defender",
+    "ReadConnections",
+    raw_read_connections
+)
+
+
+read_processes = logging_tool(
+    "defender",
+    "ReadProcesses",
+    raw_read_processes
+)
+
+
+system_status = logging_tool(
+    "defender",
+    "SystemStatus",
+    raw_system_status
+)
+
+
+# ================================================================
+# SCENARIOS
+# ================================================================
+#
+# 0 = BENIGN
+#
+# 1 = RECON
+#
+# 2 = AUTHENTICATION ANOMALY
+#
+# These are not fake feature vectors.
+#
+# They cause REAL interactions with the cyber range.
+#
+# ================================================================
+
+SCENARIOS = [
+
+    "BENIGN",
+
+    "RECON",
+
+    "AUTH_ANOMALY"
+]
+
+
+SCENARIO_TO_LABEL = {
+
+    "BENIGN": 0,
+
+    "RECON": 1,
+
+    "AUTH_ANOMALY": 2
+}
+
+
+# ================================================================
+# DEFENDER RESPONSES
+# ================================================================
+
+DEFENDER_ACTIONS = [
+
+    "ALLOW",
+
+    "MONITOR",
+
+    "INVESTIGATE"
+]
+
+
+# ================================================================
+# ATTACKER AGENT
+# ================================================================
+#
+# The attacker selects and executes tools.
+#
+# This is deliberately modular.
+#
+# A future paper can replace choose_scenario() with:
+#
+#     LLM
+#     PPO
+#     DQN
+#     multi-agent RL
+#     fine-tuned policy
+#
+# WITHOUT changing the logging architecture.
+#
+# ================================================================
+
+
+class AttackerAgent:
+
+
+    def choose_scenario(self):
+
+        return random.choice(
+            SCENARIOS
+        )
+
+
+    def act(self, scenario):
+
+        outputs = []
+
+
+        # ----------------------------------------
+        # BENIGN
+        # ----------------------------------------
+
+        if scenario == "BENIGN":
+
+            context["step"] += 1
+
+            outputs.append(
+                valid_ssh_login()
+            )
+
+
+        # ----------------------------------------
+        # RECON
+        # ----------------------------------------
+
+        elif scenario == "RECON":
+
+            context["step"] += 1
+
+            outputs.append(
+                ping_target()
+            )
+
+
+            context["step"] += 1
+
+            outputs.append(
+                tcp_probe(
+                    TARGET_SSH_PORT
+                )
+            )
+
+
+        # ----------------------------------------
+        # AUTHENTICATION ANOMALY
+        # ----------------------------------------
+
+        elif scenario == "AUTH_ANOMALY":
+
+            # Several controlled failures create
+            # genuine SSH authentication telemetry.
+
+            attempts = random.randint(
+                2,
+                5
+            )
+
+            for _ in range(attempts):
+
+                context["step"] += 1
+
+                outputs.append(
+                    failed_ssh_login()
+                )
+
+                time.sleep(
+                    random.uniform(
+                        0.05,
+                        0.20
+                    )
+                )
+
+
+        return outputs
+
+
+# ================================================================
+# DEFENDER AGENT
+# ================================================================
+
+
+class DefenderAgent:
+
+
+    def observe(self):
+
+        observations = {}
+
+
+        context["step"] += 1
+
+        observations[
+            "auth_log"
+        ] = read_auth_log()
+
+
+        context["step"] += 1
+
+        observations[
+            "connections"
+        ] = read_connections()
+
+
+        context["step"] += 1
+
+        observations[
+            "processes"
+        ] = read_processes()
+
+
+        context["step"] += 1
+
+        observations[
+            "status"
+        ] = system_status()
+
+
+        return observations
+
+
+# ================================================================
+# TELEMETRY FEATURE EXTRACTION
+# ================================================================
+#
+# IMPORTANT:
+#
+# The scenario label itself is NOT used as an input feature.
+#
+# The trained defender must learn from OBSERVABLE TELEMETRY.
+#
+# ================================================================
+
+
+def count_pattern(
+    text,
+    pattern
+):
+
+    return len(
+        re.findall(
+            pattern,
+            text,
+            flags=re.IGNORECASE
+        )
+    )
+
+
+def extract_features(
+    observations,
+    episode_start_time
+):
+
+    auth = observations[
+        "auth_log"
+    ]
+
+    connections = observations[
+        "connections"
+    ]
+
+    processes = observations[
+        "processes"
+    ]
+
+
+    failed = count_pattern(
+        auth,
+        r"failed|failure|authentication failure"
+    )
+
+
+    invalid = count_pattern(
+        auth,
+        r"invalid user"
+    )
+
+
+    accepted = count_pattern(
+        auth,
+        r"accepted password|accepted publickey"
+    )
+
+
+    disconnected = count_pattern(
+        auth,
+        r"disconnect|connection closed"
+    )
+
+
+    ssh_events = count_pattern(
+        auth,
+        r"sshd"
+    )
+
+
+    established = count_pattern(
+        connections,
+        r"ESTAB"
+    )
+
+
+    listen = count_pattern(
+        connections,
+        r"LISTEN"
+    )
+
+
+    process_count = len(
+        [
+            x
+            for x in processes.splitlines()
+            if x.strip()
+        ]
+    )
+
+
+    # ------------------------------------------------------------
+    # RECENCY FEATURES
+    #
+    # journalctl contains historical events, so raw cumulative
+    # counts alone are not ideal.
+    #
+    # We therefore also extract the tail of the log because the
+    # most recent actions occur there.
+    # ------------------------------------------------------------
+
+    auth_lines = [
+        line
+        for line in auth.splitlines()
+        if line.strip()
+    ]
+
+
+    recent_tail = "\n".join(
+        auth_lines[-20:]
+    )
+
+
+    recent_failed = count_pattern(
+        recent_tail,
+        r"failed|failure|authentication failure"
+    )
+
+
+    recent_invalid = count_pattern(
+        recent_tail,
+        r"invalid user"
+    )
+
+
+    recent_accepted = count_pattern(
+        recent_tail,
+        r"accepted password|accepted publickey"
+    )
+
+
+    recent_disconnect = count_pattern(
+        recent_tail,
+        r"disconnect|connection closed"
+    )
+
+
+    features = [
+
+        failed,
+
+        invalid,
+
+        accepted,
+
+        disconnected,
+
+        ssh_events,
+
+        established,
+
+        listen,
+
+        process_count,
+
+        recent_failed,
+
+        recent_invalid,
+
+        recent_accepted,
+
+        recent_disconnect
+    ]
+
+
+    return np.array(
+        features,
+        dtype=np.float32
+    )
+
+
+# ================================================================
+# EPISODE DATA
+# ================================================================
+
+ml_records = []
+
+
+# ================================================================
+# RUN ONE REAL CYBER-RANGE EPISODE
+# ================================================================
+
+
+def run_episode(
+    attacker,
+    defender,
+    episode_number
+):
+
+    episode_id = str(
+        uuid.uuid4()
+    )
+
+
+    scenario = (
+        attacker.choose_scenario()
+    )
+
+
+    label = (
+        SCENARIO_TO_LABEL[
+            scenario
+        ]
+    )
+
+
+    context[
+        "episode_id"
+    ] = episode_id
+
+
+    context[
+        "step"
+    ] = 0
+
+
+    context[
+        "scenario"
+    ] = scenario
+
+
+    context[
+        "ground_truth"
+    ] = label
+
+
+    context[
+        "previous_action"
+    ] = "NONE"
+
+
+    episode_start = time.time()
+
+
+    # ============================================================
+    # ATTACKER
+    # ============================================================
+
+    attacker_outputs = (
+        attacker.act(
+            scenario
+        )
+    )
+
+
+    context[
+        "previous_action"
+    ] = scenario
+
+
+    # Give system logging a moment to flush.
+
+    time.sleep(0.20)
+
+
+    # ============================================================
+    # DEFENDER
+    # ============================================================
+
+    observations = (
+        defender.observe()
+    )
+
+
+    # ============================================================
+    # EXTRACT LEARNABLE FEATURES FROM REAL TELEMETRY
+    # ============================================================
+
+    features = extract_features(
+        observations,
+        episode_start
+    )
+
+
+    record = {
+
+        "episode_id":
+            episode_id,
+
+        "scenario":
+            scenario,
+
+        "label":
+            label
+    }
+
+
+    feature_names = [
+
+        "failed_auth",
+
+        "invalid_user",
+
+        "accepted_auth",
+
+        "disconnect_events",
+
+        "ssh_events",
+
+        "established_connections",
+
+        "listening_connections",
+
+        "process_count",
+
+        "recent_failed_auth",
+
+        "recent_invalid_user",
+
+        "recent_accepted_auth",
+
+        "recent_disconnect"
+    ]
+
+
+    for name, value in zip(
+        feature_names,
+        features
+    ):
+
+        record[name] = float(
+            value
+        )
+
+
+    ml_records.append(
+        record
+    )
+
+
+    print(
+        f"Episode "
+        f"{episode_number + 1:4d}/"
+        f"{NUM_EPISODES}"
+        f"   "
+        f"{scenario:15s}"
+        f"   "
+        f"failed={features[0]:.0f}"
+        f"   "
+        f"recent_failed={features[8]:.0f}"
+    )
+
+
+# ================================================================
+# GENERATE DATA
+# ================================================================
+
+
+def generate_behavioral_dataset():
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "AUTONOMOUS CYBERSECURITY BEHAVIORAL DATA GENERATION"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    # ------------------------------------------------------------
+    # Verify valid SSH connection before experiment.
+    # ------------------------------------------------------------
+
+    print()
+
+    print(
+        "Connecting to isolated cyber-range VM..."
+    )
+
+
+    ssh = ssh_connect()
+
+    ssh.close()
+
+
+    print(
+        "Connected."
+    )
+
+
+    attacker = AttackerAgent()
+
+    defender = DefenderAgent()
+
+
+    print()
+
+    print(
+        "Generating real attacker/defender trajectories..."
+    )
+
+    print()
+
+
+    for episode in range(
+        NUM_EPISODES
+    ):
+
+        run_episode(
+            attacker,
+            defender,
+            episode
+        )
+
+
+    print()
+
+    print(
+        "Data generation complete."
+    )
+
+
+# ================================================================
+# SAVE AUTOMATIC TOOL TRAJECTORIES
+# ================================================================
+
+
+def save_trajectory_dataset():
+
+    trajectory_df = pd.DataFrame(
+        logs
+    )
+
+
+    trajectory_df.to_csv(
+        TRAJECTORY_FILE,
+        index=False
+    )
+
+
+    with open(
+        TRAJECTORY_JSONL,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        for row in logs:
+
+            f.write(
+                json.dumps(
+                    row
+                )
+                +
+                "\n"
+            )
+
+
+    print()
+
+    print(
+        "Tool trajectory events:",
+        len(
+            trajectory_df
+        )
+    )
+
+
+    print(
+        "Saved:",
+        TRAJECTORY_FILE
+    )
+
+
+    print(
+        "Saved:",
+        TRAJECTORY_JSONL
+    )
+
+
+# ================================================================
+# SAVE MACHINE LEARNING DATASET
+# ================================================================
+
+
+def save_ml_dataset():
+
+    df = pd.DataFrame(
+        ml_records
+    )
+
+
+    df.to_csv(
+        ML_DATASET_FILE,
+        index=False
+    )
+
+
+    print(
+        "Saved:",
+        ML_DATASET_FILE
+    )
+
+
+# ================================================================
+# PREPARE ML DATA
+# ================================================================
+
+
+FEATURE_COLUMNS = [
+
+    "failed_auth",
+
+    "invalid_user",
+
+    "accepted_auth",
+
+    "disconnect_events",
+
+    "ssh_events",
+
+    "established_connections",
+
+    "listening_connections",
+
+    "process_count",
+
+    "recent_failed_auth",
+
+    "recent_invalid_user",
+
+    "recent_accepted_auth",
+
+    "recent_disconnect"
+]
+
+
+def prepare_ml_data():
+
+    df = pd.DataFrame(
+        ml_records
+    )
+
+
+    X = df[
+        FEATURE_COLUMNS
+    ].values.astype(
+        np.float32
+    )
+
+
+    y = df[
+        "label"
+    ].values.astype(
+        np.int64
+    )
+
+
+    # ------------------------------------------------------------
+    # Random train/test split by EPISODE.
+    #
+    # Therefore no trajectory from a test episode is used
+    # for training.
+    # ------------------------------------------------------------
+
+    indices = np.arange(
+        len(df)
+    )
+
+
+    np.random.shuffle(
+        indices
+    )
+
+
+    split = int(
+        len(indices)
+        *
+        TRAIN_FRACTION
+    )
+
+
+    train_idx = (
+        indices[:split]
+    )
+
+
+    test_idx = (
+        indices[split:]
+    )
+
+
+    X_train = X[
+        train_idx
+    ]
+
+
+    X_test = X[
+        test_idx
+    ]
+
+
+    y_train = y[
+        train_idx
+    ]
+
+
+    y_test = y[
+        test_idx
+    ]
+
+
+    # ------------------------------------------------------------
+    # Normalize using TRAINING data only.
+    # ------------------------------------------------------------
+
+    mean = (
+        X_train.mean(
+            axis=0
+        )
+    )
+
+
+    std = (
+        X_train.std(
+            axis=0
+        )
+        +
+        1e-6
+    )
+
+
+    X_train = (
+        X_train
+        -
+        mean
+    ) / std
+
+
+    X_test = (
+        X_test
+        -
+        mean
+    ) / std
+
+
+    return (
+
+        torch.tensor(
+            X_train,
+            dtype=torch.float32
+        ),
+
+        torch.tensor(
+            y_train,
+            dtype=torch.long
+        ),
+
+        torch.tensor(
+            X_test,
+            dtype=torch.float32
+        ),
+
+        torch.tensor(
+            y_test,
+            dtype=torch.long
+        ),
+
+        mean,
+
+        std
+    )
+
+
+# ================================================================
+# SIMPLE LEARNED DEFENDER POLICY
+# ================================================================
+#
+# Deliberately simple.
+#
+# The paper contribution is DATA GENERATION.
+#
+# This network merely demonstrates that the automatically
+# generated data contain useful learnable information.
+#
+# ================================================================
+
+
+class DefenderPolicy(nn.Module):
+
+
+    def __init__(
+        self,
+        input_size
+    ):
+
+        super().__init__()
+
+
+        self.net = nn.Sequential(
+
+            nn.Linear(
+                input_size,
+                32
+            ),
+
+            nn.ReLU(),
+
+            nn.Linear(
+                32,
+                16
+            ),
+
+            nn.ReLU(),
+
+            nn.Linear(
+                16,
+                3
+            )
+        )
+
+
+    def forward(
+        self,
+        x
+    ):
+
+        return self.net(x)
+
+
+# ================================================================
+# RANDOM POLICY BASELINE
+# ================================================================
+
+
+def random_policy_accuracy(y):
+
+    predictions = torch.randint(
+        0,
+        3,
+        y.shape
+    )
+
+
+    return (
+
+        (
+            predictions == y
+        )
+        .float()
+        .mean()
+        .item()
+    )
+
+
+# ================================================================
+# MAJORITY POLICY BASELINE
+# ================================================================
+
+
+def majority_policy_accuracy(
+    y_train,
+    y_test
+):
+
+    counts = torch.bincount(
+        y_train,
+        minlength=3
+    )
+
+
+    majority = torch.argmax(
+        counts
+    )
+
+
+    predictions = torch.full_like(
+        y_test,
+        majority
+    )
+
+
+    return (
+
+        (
+            predictions
+            ==
+            y_test
+        )
+        .float()
+        .mean()
+        .item()
+    )
+
+
+# ================================================================
+# MODEL ACCURACY
+# ================================================================
+
+
+def model_accuracy(
+    model,
+    X,
+    y
+):
+
+    model.eval()
+
+
+    with torch.no_grad():
+
+        output = model(
+            X
+        )
+
+
+        predictions = torch.argmax(
+            output,
+            dim=1
+        )
+
+
+        accuracy = (
+
+            (
+                predictions == y
+            )
+            .float()
+            .mean()
+            .item()
+        )
+
+
+    return accuracy
+
+
+# ================================================================
+# TRAIN
+# ================================================================
+
+
+def train_defender(
+    model,
+    X_train,
+    y_train
+):
+
+    optimizer = optim.Adam(
+        model.parameters(),
+        lr=0.005
+    )
+
+
+    criterion = (
+        nn.CrossEntropyLoss()
+    )
+
+
+    EPOCHS = 300
+
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "TRAINING DEFENDER FROM AUTOMATICALLY GENERATED DATA"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    for epoch in range(
+        EPOCHS
+    ):
+
+        model.train()
+
+
+        optimizer.zero_grad()
+
+
+        output = model(
+            X_train
+        )
+
+
+        loss = criterion(
+            output,
+            y_train
+        )
+
+
+        loss.backward()
+
+
+        optimizer.step()
+
+
+        if (
+            epoch + 1
+        ) % 50 == 0:
+
+            train_acc = (
+                model_accuracy(
+                    model,
+                    X_train,
+                    y_train
+                )
+            )
+
+
+            print(
+
+                f"Epoch "
+                f"{epoch + 1:3d}"
+                f"   "
+                f"Loss = "
+                f"{loss.item():.4f}"
+                f"   "
+                f"Training Accuracy = "
+                f"{train_acc * 100:.2f}%"
+            )
+
+
+# ================================================================
+# CONFUSION MATRIX
+# ================================================================
+
+
+def confusion_matrix(
+    model,
+    X,
+    y
+):
+
+    model.eval()
+
+
+    with torch.no_grad():
+
+        predictions = torch.argmax(
+            model(X),
+            dim=1
+        )
+
+
+    matrix = np.zeros(
+        (
+            3,
+            3
+        ),
+        dtype=int
+    )
+
+
+    for true_value, predicted_value in zip(
+        y.cpu().numpy(),
+        predictions.cpu().numpy()
+    ):
+
+        matrix[
+            true_value,
+            predicted_value
+        ] += 1
+
+
+    return matrix
+
+
+# ================================================================
+# MACRO PRECISION / RECALL / F1
+# ================================================================
+
+
+def macro_metrics(matrix):
+
+    precisions = []
+
+    recalls = []
+
+    f1s = []
+
+
+    for cls in range(
+        3
+    ):
+
+        TP = matrix[
+            cls,
+            cls
+        ]
+
+
+        FP = (
+            matrix[
+                :,
+                cls
+            ].sum()
+            -
+            TP
+        )
+
+
+        FN = (
+            matrix[
+                cls,
+                :
+            ].sum()
+            -
+            TP
+        )
+
+
+        precision = (
+            TP
+            /
+            (
+                TP
+                +
+                FP
+                +
+                1e-8
+            )
+        )
+
+
+        recall = (
+            TP
+            /
+            (
+                TP
+                +
+                FN
+                +
+                1e-8
+            )
+        )
+
+
+        f1 = (
+            2
+            *
+            precision
+            *
+            recall
+            /
+            (
+                precision
+                +
+                recall
+                +
+                1e-8
+            )
+        )
+
+
+        precisions.append(
+            precision
+        )
+
+
+        recalls.append(
+            recall
+        )
+
+
+        f1s.append(
+            f1
+        )
+
+
+    return (
+
+        np.mean(
+            precisions
+        ),
+
+        np.mean(
+            recalls
+        ),
+
+        np.mean(
+            f1s
+        )
+    )
+
+
+# ================================================================
+# DATASET STATISTICS
+# ================================================================
+
+
+def print_dataset_statistics():
+
+    df = pd.DataFrame(
+        ml_records
+    )
+
+
+    trajectory_df = pd.DataFrame(
+        logs
+    )
+
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "AUTOMATIC DATASET STATISTICS"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print()
+
+    print(
+        "Episodes:",
+        len(df)
+    )
+
+
+    print(
+        "Automatically captured tool events:",
+        len(
+            trajectory_df
+        )
+    )
+
+
+    print()
+
+    print(
+        "Scenario Distribution"
+    )
+
+    print(
+        "---------------------"
+    )
+
+
+    print(
+        df[
+            "scenario"
+        ]
+        .value_counts()
+    )
+
+
+    print()
+
+    print(
+        "Tool Usage Distribution"
+    )
+
+    print(
+        "-----------------------"
+    )
+
+
+    print(
+        trajectory_df[
+            "tool_name"
+        ]
+        .value_counts()
+    )
+
+
+    print()
+
+    print(
+        "Agent Distribution"
+    )
+
+    print(
+        "------------------"
+    )
+
+
+    print(
+        trajectory_df[
+            "agent_role"
+        ]
+        .value_counts()
+    )
+
+
+# ================================================================
+# RESULTS
+# ================================================================
+
+
+def evaluate_experiment(
+
+    model,
+
+    X_train,
+
+    y_train,
+
+    X_test,
+
+    y_test
+):
+
+    random_acc = (
+        random_policy_accuracy(
+            y_test
+        )
+    )
+
+
+    majority_acc = (
+        majority_policy_accuracy(
+            y_train,
+            y_test
+        )
+    )
+
+
+    trained_acc = (
+        model_accuracy(
+            model,
+            X_test,
+            y_test
+        )
+    )
+
+
+    matrix = (
+        confusion_matrix(
+            model,
+            X_test,
+            y_test
+        )
+    )
+
+
+    precision, recall, f1 = (
+        macro_metrics(
+            matrix
+        )
+    )
+
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "HELD-OUT EXPERIMENT RESULTS"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print()
+
+    print(
+        f"Random policy accuracy:   "
+        f"{random_acc * 100:.2f}%"
+    )
+
+
+    print(
+        f"Majority policy accuracy: "
+        f"{majority_acc * 100:.2f}%"
+    )
+
+
+    print(
+        f"Trained policy accuracy:  "
+        f"{trained_acc * 100:.2f}%"
+    )
+
+
+    print()
+
+    print(
+        f"Macro Precision: "
+        f"{precision:.4f}"
+    )
+
+
+    print(
+        f"Macro Recall:    "
+        f"{recall:.4f}"
+    )
+
+
+    print(
+        f"Macro F1:        "
+        f"{f1:.4f}"
+    )
+
+
+    print()
+
+    print(
+        "Confusion Matrix"
+    )
+
+    print(
+        "Rows = Actual"
+    )
+
+    print(
+        "Columns = Predicted"
+    )
+
+    print()
+
+    print(
+        "             ALLOW   MONITOR   INVESTIGATE"
+    )
+
+
+    names = [
+
+        "ALLOW      ",
+
+        "MONITOR    ",
+
+        "INVESTIGATE"
+    ]
+
+
+    for name, row in zip(
+        names,
+        matrix
+    ):
+
+        print(
+
+            f"{name}  "
+            f"{row[0]:6d}  "
+            f"{row[1]:8d}  "
+            f"{row[2]:11d}"
+        )
+
+
+    improvement_random = (
+        trained_acc
+        -
+        random_acc
+    )
+
+
+    improvement_majority = (
+        trained_acc
+        -
+        majority_acc
+    )
+
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "PROOF OF CONCEPT"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print()
+
+    print(
+        f"Before training (random): "
+        f"{random_acc * 100:.2f}%"
+    )
+
+
+    print(
+        f"After training:            "
+        f"{trained_acc * 100:.2f}%"
+    )
+
+
+    print()
+
+    print(
+        "Improvement over random:"
+    )
+
+    print(
+        f"{improvement_random * 100:+.2f} "
+        "percentage points"
+    )
+
+
+    print()
+
+    print(
+        "Improvement over majority:"
+    )
+
+    print(
+        f"{improvement_majority * 100:+.2f} "
+        "percentage points"
+    )
+
+
+    print()
+
+
+    if (
+        trained_acc
+        >
+        max(
+            random_acc,
+            majority_acc
+        )
+    ):
+
+        print(
+            "RESULT:"
+        )
+
+        print(
+            "The automatically generated behavioral dataset "
+            "produced a measurable learning benefit on "
+            "held-out cyber-range episodes."
+        )
+
+    else:
+
+        print(
+            "RESULT:"
+        )
+
+        print(
+            "The automatically generated dataset did not "
+            "produce a measurable held-out improvement "
+            "in this run."
+        )
+
+
+# ================================================================
+# SAVE MODEL
+# ================================================================
+
+
+def save_model(
+    model,
+    mean,
+    std
+):
+
+    torch.save(
+
+        {
+
+            "model_state_dict":
+                model.state_dict(),
+
+            "feature_columns":
+                FEATURE_COLUMNS,
+
+            "mean":
+                mean,
+
+            "std":
+                std,
+
+            "classes":
+                DEFENDER_ACTIONS
+        },
+
+        MODEL_FILE
+    )
+
+
+    print()
+
+    print(
+        "Saved trained defender:",
+        MODEL_FILE
+    )
+
+
+# ================================================================
+# MAIN
+# ================================================================
+
+
+def main():
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "AUTONOMOUS CYBER AGENT DATASET EXPERIMENT"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print()
+
+    print(
+        "Target:",
+        TARGET_HOST
+    )
+
+
+    print(
+        "SSH Port:",
+        TARGET_SSH_PORT
+    )
+
+
+    print(
+        "Episodes:",
+        NUM_EPISODES
+    )
+
+
+    # ============================================================
+    # 1. REAL CYBER-RANGE INTERACTION
+    # ============================================================
+
+    generate_behavioral_dataset()
+
+
+    # ============================================================
+    # 2. AUTOMATIC DATASET CREATION
+    # ============================================================
+
+    save_trajectory_dataset()
+
+    save_ml_dataset()
+
+    print_dataset_statistics()
+
+
+    # ============================================================
+    # 3. TRAIN / TEST SPLIT
+    # ============================================================
+
+    (
+
+        X_train,
+
+        y_train,
+
+        X_test,
+
+        y_test,
+
+        mean,
+
+        std
+
+    ) = prepare_ml_data()
+
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "TRAIN / TEST DATA"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print()
+
+    print(
+        "Training episodes:",
+        len(
+            X_train
+        )
+    )
+
+
+    print(
+        "Held-out episodes:",
+        len(
+            X_test
+        )
+    )
+
+
+    # ============================================================
+    # 4. MODEL
+    # ============================================================
+
+    model = DefenderPolicy(
+        len(
+            FEATURE_COLUMNS
+        )
+    )
+
+
+    # ============================================================
+    # 5. BEFORE TRAINING
+    # ============================================================
+
+    random_before = (
+        random_policy_accuracy(
+            y_test
+        )
+    )
+
+
+    majority_before = (
+        majority_policy_accuracy(
+            y_train,
+            y_test
+        )
+    )
+
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "BEFORE TRAINING"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print()
+
+    print(
+        f"Random policy:   "
+        f"{random_before * 100:.2f}%"
+    )
+
+
+    print(
+        f"Majority policy: "
+        f"{majority_before * 100:.2f}%"
+    )
+
+
+    # ============================================================
+    # 6. TRAIN USING GENERATED DATA
+    # ============================================================
+
+    train_defender(
+        model,
+        X_train,
+        y_train
+    )
+
+
+    # ============================================================
+    # 7. HELD-OUT EVALUATION
+    # ============================================================
+
+    evaluate_experiment(
+
+        model,
+
+        X_train,
+
+        y_train,
+
+        X_test,
+
+        y_test
+    )
+
+
+    # ============================================================
+    # 8. SAVE LEARNED POLICY
+    # ============================================================
+
+    save_model(
+        model,
+        mean,
+        std
+    )
+
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "EXPERIMENT COMPLETE"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print()
+
+    print(
+        "Generated:"
+    )
+
+    print()
+
+    print(
+        "  ",
+        TRAJECTORY_FILE
+    )
+
+    print(
+        "  ",
+        TRAJECTORY_JSONL
+    )
+
+    print(
+        "  ",
+        ML_DATASET_FILE
+    )
+
+    print(
+        "  ",
+        MODEL_FILE
+    )
+
+
+    print()
+
+    print(
+        "Core experimental chain:"
+    )
+
+    print()
+
+    print(
+        "Cyber Range"
+    )
+
+    print(
+        "    -> Agent Tool Use"
+    )
+
+    print(
+        "    -> Automatic Wrapper Logging"
+    )
+
+    print(
+        "    -> Behavioral Trajectories"
+    )
+
+    print(
+        "    -> Training Dataset"
+    )
+
+    print(
+        "    -> Learned Defender"
+    )
+
+    print(
+        "    -> Held-Out Evaluation"
+    )
+
+    print()
+
+
+# ================================================================
+# RUN
+# ================================================================
+
+
+if __name__ == "__main__":
+
+    main()
+
+
+
+
+```
+
+
+
+
+
 
 
 
