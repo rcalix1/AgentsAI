@@ -1,3 +1,9 @@
+## Training AI agents
+
+* https://github.com/rcalix1/AgentsAI/tree/main/trainingAIagents
+
+
+
 ## Cyber Security with AI agents
 
 * on windows
