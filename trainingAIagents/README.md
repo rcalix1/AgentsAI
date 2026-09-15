@@ -3,6 +3,79 @@
 * a type of Closed-Loop Agent Learning 
 * AI Agents and Training
 
+---
+
+
+
+# Simple Python Functions in a Separate File
+
+A simple way to keep Python code clean is to put reusable functions in a separate file.
+
+## File Structure
+
+```text
+main.py
+mytools.py
+```
+
+## mytools.py
+
+Put functions you already understand in this file.
+
+```python
+def connect_ssh(ip, username, password):
+    print("Connecting...")
+    # SSH code here
+    return connection
+
+
+def read_log(connection):
+    # Log-reading code here
+    return log
+```
+
+## main.py
+
+Import the functions you need:
+
+```python
+from mytools import connect_ssh, read_log
+
+ssh = connect_ssh(ip, username, password)
+
+log = read_log(ssh)
+
+print(log)
+```
+
+You can also import everything:
+
+```python
+from mytools import *
+
+ssh = connect_ssh(ip, username, password)
+log = read_log(ssh)
+```
+
+## Basic Idea
+
+As the program grows:
+
+1. Write and test code in `main.py`.
+2. Once a section works and you understand it, turn it into a function.
+3. Move that function into `mytools.py`.
+4. Import and call the function from `main.py`.
+
+This keeps `main.py` short and readable without requiring classes.
+
+
+
+---
+
+
+
+
+
 ## Current Jupyters
 
 * 3 works
