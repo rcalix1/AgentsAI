@@ -64,6 +64,38 @@ Important: don't put 10.0.2.15 into PuTTY when using this NAT setup. Use 127.0.0
 
 ```
 
+## Qwen agent - Runs faster
+
+
+* on Ollama, run:
+* ollama run qwen2.5:0.5b
+
+
+```
+
+
+
+
+researcher_agent = Agent(
+    role='Cyber Security Analyst',
+    goal='Analyze and test cyber security in your corporation',
+    backstory="""You're a cyber security specialist at a large company.
+    You're responsible for analyzing security data and testing the company cyber security.""",
+    verbose=False,
+    ## llm=llm_llama
+    ## llm=LLM( model="ollama/llama3.2", base_url="http://localhost:11434" )
+    llm=LLM( model="ollama/qwen2.5:0.5b", base_url="http://localhost:11434" )
+)
+
+
+
+```
+
+
+
+
+
+
 
 ## Code for SSH
 
