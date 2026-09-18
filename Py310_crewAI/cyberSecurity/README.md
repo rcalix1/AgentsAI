@@ -359,3 +359,194 @@ print("\nSSH connection closed.")
 
 
 
+
+---
+
+
+## Colab Connection
+
+
+
+# Colab → Google Drive → Paramiko → Virtual Machine
+
+This setup allows Google Colab to control a local VirtualBox VM without exposing the VM to the Internet.
+
+The basic architecture is:
+
+```text
+Google Colab (GPU)
+       |
+       | command.txt
+       ↓
+Google Drive
+       |
+       ↓
+Local Mac
+       |
+    Paramiko
+       |
+       ↓
+VirtualBox VM
+       |
+       | result.txt
+       ↓
+Google Drive
+       |
+       ↓
+Google Colab
+```
+
+## 1. Create the Google Drive Folder
+
+Create:
+
+```text
+MyDrive/VM_bridge/
+```
+
+Inside the folder create two files:
+
+```text
+command.txt
+result.txt
+```
+
+---
+
+## 2. Colab: Mount Google Drive
+
+Run:
+
+```python
+from google.colab import drive
+
+drive.mount('/content/drive')
+```
+
+---
+
+## 3. Colab: Send a Command
+
+For example:
+
+```python
+path = "/content/drive/MyDrive/VM_bridge/command.txt"
+
+with open(path, "w") as f:
+    f.write("hostname")
+```
+
+This places the command in Google Drive.
+
+---
+
+## 4. Mac: Run the Paramiko Bridge
+
+The Mac watches `command.txt`.
+
+When a new command appears, it sends the command to the VM using Paramiko and writes the output to `result.txt`.
+
+```python
+import time
+import paramiko
+
+path = "/YOUR/GOOGLE/DRIVE/VM_bridge/"
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+ssh.connect(
+    "127.0.0.1",
+    port=YOUR_PORT,
+    username="YOUR_USERNAME",
+    password="YOUR_PASSWORD"
+)
+
+last_command = ""
+
+while True:
+
+    with open(path + "command.txt", "r") as f:
+        command = f.read().strip()
+
+    if command and command != last_command:
+
+        print("Running:", command)
+
+        stdin, stdout, stderr = ssh.exec_command(command)
+
+        result = stdout.read().decode()
+        error = stderr.read().decode()
+
+        with open(path + "result.txt", "w") as f:
+            f.write(result + error)
+
+        last_command = command
+
+    time.sleep(2)
+```
+
+Replace:
+
+```text
+/YOUR/GOOGLE/DRIVE/VM_bridge/
+YOUR_PORT
+YOUR_USERNAME
+YOUR_PASSWORD
+```
+
+with the correct values for the local machine and VM.
+
+---
+
+## 5. Colab: Read the VM Result
+
+After the command executes:
+
+```python
+path = "/content/drive/MyDrive/VM_bridge/result.txt"
+
+with open(path, "r") as f:
+    print(f.read())
+```
+
+For example, if Colab sends:
+
+```text
+hostname
+```
+
+the complete path is:
+
+```text
+Colab
+  ↓
+command.txt
+  ↓
+Google Drive
+  ↓
+Mac Python
+  ↓
+Paramiko
+  ↓
+Ubuntu VM
+  ↓
+result.txt
+  ↓
+Google Drive
+  ↓
+Colab
+```
+
+## Why This Is Needed
+
+When Paramiko runs locally, `127.0.0.1` refers to the local computer and can reach the VirtualBox VM through port forwarding.
+
+When Paramiko runs in Google Colab, `127.0.0.1` refers to the remote Colab server.
+
+The Google Drive files therefore act as a simple communication bridge between the GPU-based Colab program and the locally running VM.
+
+
+
+
+
