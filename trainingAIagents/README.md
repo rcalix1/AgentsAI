@@ -78,7 +78,7 @@ This keeps `main.py` short and readable without requiring classes.
 
 ## Current Jupyters
 
-* 3 works
+* 3 work
 * 4 same as 3 but started adding PPO
 
 
